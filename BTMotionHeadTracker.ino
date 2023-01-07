@@ -19,7 +19,7 @@
 
 int16_t gamepadAxesMin = 0x0000;
 int16_t gamepadAxesMax = 0x7FFF;
-BleGamepad bleGamepad("Motion HeadTracker", "Shenron", 50); // Set custom device name, manufacturer and initial battery level
+BleGamepad bleGamepad("Motion HeadTracker", "Shenron", 100); // Set custom device name, manufacturer and initial battery level
 
 // Use the procedure below to set a custom Bluetooth MAC address
 // Compiler adds 0x02 to the last value of board's base MAC address to get the BT MAC address, so take 0x02 away from the value you actually want when setting
