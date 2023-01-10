@@ -17,9 +17,14 @@
 #define PIN_SCL 19
 #define I2C_400kHz 400000
 
+// onboard button
+#define PIN_BUTTON 32
+int buttonState = 0;
+
 int16_t gamepadAxesMin = 0x0000;
 int16_t gamepadAxesMax = 0x7FFF;
 BleGamepad bleGamepad("Motion HeadTracker", "Shenron", 100); // Set custom device name, manufacturer and initial battery level
+int16_t gamepadX, gamepadY;
 
 // Use the procedure below to set a custom Bluetooth MAC address
 // Compiler adds 0x02 to the last value of board's base MAC address to get the BT MAC address, so take 0x02 away from the value you actually want when setting
@@ -37,13 +42,14 @@ uint8_t fifoBuffer[64]; // FIFO storage buffer
 Quaternion q; // quaternion container [w, x, y, z]
 float gyro[3]; // Gyro angles container
 float radToDegre = 180 / M_PI; // to convert radian angles to degre
-float gyroXdelta = 15.0, gyroYdelta = -15.0, gyroXscale, gyroYscale;
+float gyroXdelta = 15.0, gyroYdelta = 15.0, gyroXscale, gyroYscale;
+float gyroXcenter = 60, gyroYcenter = 4.5;
 long delayUpdate = 50; // millis between updates
 long nextUpdate = 0;
+bool centerAxes = false; // true to center the axes, triggered by onboard button
 
 void setup()
 {
-  delay(500);
   // initialize serial communication
   // (38400 chosen because it works as well at 8MHz as it does at 16MHz)
   Serial.begin(38400);
@@ -53,16 +59,15 @@ void setup()
   Wire.begin(PIN_SDA, PIN_SCL);
   Wire.setClock(I2C_400kHz);
 
-  InitializeMpu();
+  InitializeMpu(false);
   InitializeBleGamepad();
+  // Set new MAC address
+  //esp_base_mac_addr_set(&MACAddress[0]);
 
   float axesAmplitude = gamepadAxesMax - gamepadAxesMin;
   gyroXscale = axesAmplitude / (gyroXdelta * 2.0);
   gyroYscale = axesAmplitude / (gyroYdelta * 2.0);
-  // Set new MAC address
-  //esp_base_mac_addr_set(&MACAddress[0]);
-
-  delay(3000);
+  pinMode(PIN_BUTTON, INPUT);
 }
 
 void loop()
@@ -70,21 +75,29 @@ void loop()
   long timeNow = millis();
   if(timeNow >= nextUpdate)
   {
-    ReadMpu(false);    
-    UpdateGamepadAxis(true);
+    buttonState = digitalRead(PIN_BUTTON);
+    ReadMpu();
+    UpdateAxes();
+    UpdateGamepad();
+    DisplayDataToSerial(true);
     nextUpdate = timeNow + delayUpdate;
   }
 }
 
-void InitializeMpu()
+void InitializeMpu(bool performCalibration)
 {
   // initialize device
   Serial.println("Initializing MPU...");
   mpu.initialize();
   Serial.println("Initializing DMP...");
   mpu.dmpInitialize();
-  Serial.println("Generating offsets and calibrating MPU...");
-  mpu.CalibrateGyro();
+  mpu.setXGyroOffset(0);
+  mpu.setYGyroOffset(0);
+  if(performCalibration)
+  {
+    Serial.println("Generating offsets and calibrating MPU...");
+    mpu.CalibrateGyro();
+  }
   Serial.print("Active offsets: ");
   mpu.PrintActiveOffsets();
   Serial.println(F("Enabling DMP..."));
@@ -121,7 +134,7 @@ void InitializeBleGamepad()
   Serial.println("]");
 }
 
-void ReadMpu(bool echoSerial)
+void ReadMpu()
 {
   // read the Latest packet from FIFO
   if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer) == false)
@@ -133,31 +146,46 @@ void ReadMpu(bool echoSerial)
   mpu.dmpGetEuler(gyro, &q);
   for(int index=0; index < 3; ++index)
     gyro[index] *= radToDegre;
-
-  if(echoSerial == false)
-    return;
-
-  // display on serial
-  Serial.printf("gyro:\tx: %3.3f\ty: %3.3f\tz: %3.3f", gyro[0], gyro[1], gyro[2]);
-  Serial.println();
 }
 
-void UpdateGamepadAxis(bool echoSerial)
+void UpdateAxes()
+{
+  if(buttonState == LOW)
+  {
+    centerAxes = false;
+  }
+  else if(centerAxes == false)
+  {
+    centerAxes = true;
+    gyroXcenter = gyro[0];
+    gyroYcenter = gyro[1];
+  }
+  
+  gamepadX = getAxe(gyro[0] - gyroXcenter, gyroXdelta, gyroXscale);
+  gamepadY = getAxe(gyro[1] - gyroYcenter, gyroYdelta, gyroYscale);
+}
+
+void UpdateGamepad()
 {
   if (bleGamepad.isConnected() == false)
     return;
 
-  int16_t axeX = getAxe(gyro[0], gyroXdelta, gyroXscale);
-  int16_t axeY = getAxe(gyro[1], gyroYdelta, gyroYscale);
-
-  bleGamepad.setX(axeX);
-  bleGamepad.setY(axeY);
+  bleGamepad.setX(gamepadX);
+  bleGamepad.setY(gamepadY);
   bleGamepad.sendReport();
+}
 
-  if(echoSerial == false)
+void DisplayDataToSerial(bool enabled)
+{
+  if(enabled == false)
     return;
 
-  Serial.printf("bleGamepad axeX: %6d\taxeY: %6d", axeX, axeY);
+  // display on serial
+  Serial.printf("x/y: gyro[%3.3f / %3.3f] ", gyro[0], gyro[1]);
+  Serial.printf("center: [%3.3f / %3.3f] ", gyroXcenter, gyroYcenter);
+  Serial.printf("scale: [%3.3f / %3.3f] ", gyroXscale, gyroYscale);
+  Serial.printf("gamepad: [%6d / %6d] ", gamepadX, gamepadY);
+  Serial.printf("buttonState: [%d] ", buttonState);
   Serial.println();
 }
 
